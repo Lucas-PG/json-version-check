@@ -1,0 +1,62 @@
+name: JSON Version Check
+description: Checks if a specified key in a user-defined JSON file has changed between commits
+branding:
+  icon: check
+  color: blue
+
+inputs:
+  file-path:
+    description: Path to the JSON file to check (e.g., composer.json, package.json)
+    required: false
+    default: package.json
+  key:
+    description: JSON key to compare for changes
+    required: false
+    default: version
+
+outputs:
+  changed:
+    description: Whether the specified key's value has changed (true or false)
+    value: ${{ steps.check-version.outputs.changed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs and check version change
+      id: check-version
+      shell: bash
+      run: |
+        FILE_PATH_INPUT="${{ inputs.file-path }}"
+        KEY_INPUT="${{ inputs.key }}"
+        : "${FILE_PATH_INPUT:=package.json}"
+        : "${KEY_INPUT:=version}"
+        if ! echo "$KEY_INPUT" | grep -q '^[a-zA-Z0-9_-]\+$'; then
+          echo "Error: key input must be a valid JSON key (alphanumeric, underscore, or hyphen)"
+          exit 1
+        fi
+        FILE_PATH="${GITHUB_WORKSPACE}/${FILE_PATH_INPUT}"
+        if [ ! -f "$FILE_PATH" ]; then
+          echo "Error: JSON file not found at $FILE_PATH_INPUT"
+          exit 1
+        fi
+        if ! git show HEAD^:${FILE_PATH_INPUT} >/dev/null 2>&1; then
+          echo "Previous version of $FILE_PATH_INPUT not found, assuming new file"
+          echo "changed=true" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        if ! current_value=$(jq -r ".$KEY_INPUT // \"none\"" "$FILE_PATH" 2>/dev/null); then
+          echo "Error: Invalid JSON in $FILE_PATH_INPUT"
+          exit 1
+        fi
+        if ! previous_value=$(git show HEAD^:${FILE_PATH_INPUT} | jq -r ".$KEY_INPUT // \"none\"" 2>/dev/null); then
+          echo "Error: Invalid JSON in previous version of $FILE_PATH_INPUT"
+          exit 1
+        fi
+        echo "Current $KEY_INPUT: $current_value, Previous $KEY_INPUT: $previous_value"
+        if [ "$current_value" != "$previous_value" ]; then
+          echo "Value of $KEY_INPUT changed from $previous_value to $current_value"
+          echo "changed=true" >> $GITHUB_OUTPUT
+        else
+          echo "No change detected in $KEY_INPUT."
+          echo "changed=false" >> $GITHUB_OUTPUT
+        fi
